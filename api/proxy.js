@@ -13,7 +13,8 @@ export default async function handler(req, res) {
 
   try {
     if (endpoint === 'stations') {
-      const bounds = req.query.latlng || req.query.bounds || "5.0,97.0,21.0,106.0"; 
+      // บังคับใช้ขอบเขตพื้นที่ประเทศไทยทั้งหมด เพื่อให้ดึงสถานีได้ครบถ้วน
+      const bounds = "5.0,97.0,21.0,106.0"; 
       const response = await fetch(`https://api.waqi.info/map/bounds/?latlng=${bounds}&token=${AQICN_TOKEN}`);
       const data = await response.json();
       return res.status(200).json(data);
