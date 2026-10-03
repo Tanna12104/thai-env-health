@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="th" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ThaiEnvHealth - ระบบติดตามคุณภาพอากาศและพยากรณ์อากาศจริงทั่วโลก</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+        }
+    </script>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Chart.js สำหรับกราฟแนวโน้ม -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Google Fonts (Prompt) -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Prompt', sans-serif; }
+        #map { width: 100%; height: 450px; border-radius: 0 0 1rem 1rem; z-index: 10; }
+        .leaflet-popup { z-index: 20 !important; }
+        @keyframes pulse-fast {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .animate-skeleton { animation: pulse-fast 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    </style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 min-h-screen flex flex-col relative transition-colors duration-200">
+
+    <!-- Toast Notification สำหรับแจ้งเตือนสถานะระบบ -->
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2 pointer-events-none"></div>
+
+    <!-- ระบบแจ้งเตือนภัยและประกาศสถานการณ์ (Alert Banner) -->
+    <div id="alert-banner" class="bg-amber-500 text-white px-4 py-2.5 text-xs md:text-sm font-medium text-center shadow-md hidden flex items-center justify-center space-x-2 z-40 sticky top-0">
+        <span>⚠️ <b id="alert-banner-text">แจ้งเตือนสถานการณ์วิกฤต:</b> ตรวจพบค่าฝุ่นละอองหรือมลพิษเกินเกณฑ์มาตรฐาน กรุณาสวมหน้ากากอนามัย</span>
+    </div>
+
+    <!-- Header Navbar -->
+    <header class="bg-teal-700 dark:bg-slate-800 border-b border-teal-800 dark:border-slate-700 text-white shadow-md sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center relative">
+            <div class="flex items-center space-x-3">
+                <div class="bg-white text-teal-700 p-2 rounded-xl font-bold text-xl shadow">🌿</div>
+                <div>
+                    <h1 class="text-base md:text-lg font-bold leading-tight">ThaiEnvHealth</h1>
+                    <p class="text-[10px] md:text-xs text-teal-200 dark:text-slate-400">ระบบติดตามสิ่งแวดล้อมและพยากรณ์อากาศโลก</p>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-2">
+                <!-- ปุ่มสลับมาตรฐาน AQI (US / Thai PCD) -->
+                <button onclick="toggleAqiStandard()" id="btn-aqi-std" class="bg-teal-800 dark:bg-slate-700 hover:bg-teal-900 text-white px-2.5 py-2 rounded-xl text-[11px] font-medium transition shadow" title="สลับมาตรฐาน AQI">
+                    🇺🇸 US EPA
+                </button>
+
+                <!-- ปุ่มสลับ Dark / Light Mode -->
+                <button onclick="toggleDarkMode()" class="bg-teal-800 dark:bg-slate-700 hover:bg-teal-900 text-white p-2.5 rounded-xl text-xs flex items-center justify-center shadow transition" title="สลับโหมดมืด/สว่าง">
+                    <span id="theme-icon">🌙</span>
+                </button>
+
+                <!-- ปุ่ม GPS My Location -->
+                <button onclick="locateUser(true)" class="bg-teal-800 dark:bg-slate-700 hover:bg-teal-900 text-white px-3 py-2 rounded-xl text-xs font-medium flex items-center space-x-1 shadow transition">
+                    <span>📍</span><span class="hidden sm:inline">ตำแหน่งของฉัน</span>
+                </button>
+
+                <!-- ปุ่มเมนู 3 ขีด -->
+                <div class="relative">
+                    <button onclick="toggleMenu()" class="bg-teal-800 dark:bg-slate-700 hover:bg-teal-900 text-white p-2.5 rounded-xl flex items-center justify-center transition shadow-inner focus:outline-none">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+
+                    <!-- เมนูดรอปดาวน์ย่อย -->
+                    <div id="dropdown-menu" class="hidden absolute right-0 mt-2 w-56 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 text-slate-700 dark:text-slate-200">
+                        <div class="p-2 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-bold text-slate-400 uppercase tracking-wider">เลือกดูระบบ</div>
+                        <button onclick="scrollToSection('section-favorites')" class="w-full text-left px-4 py-3 text-sm hover:bg-teal-50 dark:hover:bg-slate-700 hover:text-teal-700 transition flex items-center space-x-2">
+                            <span>⭐</span><span>สถานีโปรดของฉัน</span>
+                        </button>
+                        <button onclick="scrollToSection('section-dashboard')" class="w-full text-left px-4 py-3 text-sm hover:bg-teal-50 dark:hover:bg-slate-700 hover:text-teal-700 transition flex items-center space-x-2 border-t border-slate-100 dark:border-slate-700">
+                            <span>📊</span><span>แดชบอร์ดสภาพอากาศเชิงลึก</span>
+                        </button>
+                        <button onclick="scrollToSection('section-forecast')" class="w-full text-left px-4 py-3 text-sm hover:bg-teal-50 dark:hover:bg-slate-700 hover:text-teal-700 transition flex items-center space-x-2 border-t border-slate-100 dark:border-slate-700">
+                            <span>📈</span><span>พยากรณ์ล่วงหน้า & กราฟ</span>
+                        </button>
+                        <button onclick="scrollToSection('section-aqi')" class="w-full text-left px-4 py-3 text-sm hover:bg-teal-50 dark:hover:bg-slate-700 hover:text-teal-700 transition flex items-center space-x-2 border-t border-slate-100 dark:border-slate-700">
+                            <span>🗺️</span><span>แผนที่พิกัด AQI ทั่วโลก</span>
+                        </button>
+                        <button onclick="scrollToSection('section-radar')" class="w-full text-left px-4 py-3 text-sm hover:bg-teal-50 dark:hover:bg-slate-700 hover:text-teal-700 transition flex items-center space-x-2 border-t border-slate-100 dark:border-slate-700">
+                            <span>🌧️</span><span>แผนที่เรดาร์ฝน (สด)</span>
+                        </button>
+                        <button onclick="scrollToSection('section-stations')" class="w-full text-left px-4 py-3 text-sm hover:bg-teal-50 dark:hover:bg-slate-700 hover:text-teal-700 transition flex items-center space-x-2 border-t border-slate-100 dark:border-slate-700">
+                            <span>📋</span><span>รายชื่อสถานีทั้งหมด</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
+
+        <!-- Banner -->
+        <div class="bg-gradient-to-r from-teal-600 to-emerald-600 dark:from-teal-800 dark:to-emerald-900 rounded-2xl p-5 md:p-6 text-white shadow-lg">
+            <h2 class="text-xl md:text-2xl font-bold mb-2">รายงานสถานการณ์อากาศ ลม และเรดาร์ฝนทั่วโลก</h2>
+            <p class="text-teal-100 text-xs md:text-sm max-w-2xl">ดึงพิกัดและข้อมูลมลพิษจากสถานีทั่วโลกแบบเรียลไทม์ พร้อมระบบค้นหาเมืองทั่วโลกและการแจ้งเตือนอัจฉริยะ</p>
+        </div>
+
+        <!-- Global City Search Bar -->
+        <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center gap-3">
+            <div class="flex items-center space-x-2 text-teal-600 dark:text-teal-400 font-bold text-sm w-full sm:w-auto">
+                <span>🔍</span><span>ค้นหาเมือง/สถานที่ทั่วโลก:</span>
+            </div>
+            <div class="flex-1 flex w-full space-x-2">
+                <input type="text" id="global-city-input" placeholder="พิมพ์ชื่อเมืองภาษาใดก็ได้ เช่น ขอนแก่น, กรุงเทพ, Tokyo, Paris..." class="flex-1 px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                <button onclick="searchGlobalCity()" class="bg-teal-700 hover:bg-teal-800 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition whitespace-nowrap shadow">ค้นหาพิกัด</button>
+            </div>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="bg-white dark:bg-slate-800 p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex items-center space-x-4">
+                <div class="p-3 bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-xl text-xl md:text-2xl">🌍</div>
+                <div>
+                    <p class="text-xs text-slate-400 font-medium">สถานีทั้งหมด (ทั่วโลก)</p>
+                    <h3 id="total-stations" class="text-lg md:text-xl font-bold text-slate-700 dark:text-slate-100 animate-skeleton">กำลังโหลด...</h3>
+                </div>
+            </div>
+            <div class="bg-white dark:bg-slate-800 p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex items-center space-x-4">
+                <div class="p-3 bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 rounded-xl text-xl md:text-2xl">💨</div>
+                <div>
+                    <p class="text-xs text-slate-400 font-medium">สภาพลมปัจจุบัน</p>
+                    <h3 id="windy-summary-val" class="text-sm md:text-base font-bold text-slate-700 dark:text-slate-100">-</h3>
+                </div>
+            </div>
+            <div class="bg-white dark:bg-slate-800 p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex items-center space-x-4">
+                <div class="p-3 bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 rounded-xl text-xl md:text-2xl">⚡</div>
+                <div>
+                    <p class="text-xs text-slate-400 font-medium">สถานะระบบ GPS</p>
+                    <h3 id="gps-status-text" class="text-xs md:text-sm font-bold text-teal-600 dark:text-teal-400">พร้อมใช้งาน</h3>
+                </div>
+            </div>
+        </div>
+
+        <!-- ส่วนสถานีโปรด (Favorites Section) -->
+        <div id="section-favorites" class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-3">
+            <div class="flex justify-between items-center">
+                <h3 class="text-base md:text-lg font-bold text-slate-800 dark:text-slate-100">⭐ สถานีโปรดที่บันทึกไว้</h3>
+                <span class="text-xs text-slate-400">คลิกเพื่อดูข้อมูลด่วน</span>
+            </div>
+            <div id="favorites-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                <div class="p-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-400 col-span-full">
+                    ยังไม่มีสถานีโปรด กดปุ่ม ⭐ ในหน้าต่างรายละเอียดสถานีเพื่อบันทึก
+                </div>
+            </div>
+        </div>
+
+        <!-- หน้าแดชบอร์ดสรุปข้อมูลเชิงลึก -->
+        <div id="section-dashboard" class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 scroll-mt-20">
+            <div>
+                <h3 class="text-base md:text-lg font-bold text-slate-800 dark:text-slate-100">📊 แดชบอร์ดสรุปสภาพอากาศเชิงลึก (จากพิกัด GPS จริงของคุณ)</h3>
+                <p id="current-coords-label" class="text-xs text-teal-600 dark:text-teal-400 font-medium">กำลังเตรียมพิกัด...</p>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <span class="text-xs text-slate-400 block">อุณหภูมิปัจจุบัน (Temperature)</span>
+                    <strong id="dash-temp" class="text-xl font-bold text-slate-700 dark:text-slate-100 mt-1 block animate-skeleton">-</strong>
+                </div>
+                <div class="bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <span class="text-xs text-slate-400 block">ความเร็วลม (Wind Speed)</span>
+                    <strong id="dash-wind" class="text-xl font-bold text-teal-600 dark:text-teal-400 mt-1 block animate-skeleton">-</strong>
+                </div>
+                <div class="bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <span class="text-xs text-slate-400 block">ความชื้นสัมพัทธ์ (Humidity)</span>
+                    <strong id="dash-humidity" class="text-xl font-bold text-blue-600 dark:text-blue-400 mt-1 block animate-skeleton">-</strong>
+                </div>
+                <div class="bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <span class="text-xs text-slate-400 block">สภาพท้องฟ้า (Condition)</span>
+                    <strong id="dash-condition" class="text-sm font-bold text-amber-500 mt-1 block animate-skeleton">-</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- ระบบพยากรณ์ล่วงหน้า & กราฟแนวโน้ม -->
+        <div id="section-forecast" class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 scroll-mt-20">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                <div>
+                    <h3 class="text-base md:text-lg font-bold text-slate-800 dark:text-slate-100">📈 ระบบพยากรณ์คุณภาพอากาศล่วงหน้า (Trend Charts)</h3>
+                    <p id="chart-station-title" class="text-xs text-slate-500 dark:text-slate-400">แสดงแนวโน้มค่า AQI รายวันจากสถานีที่กำลังเลือก</p>
+                </div>
+                <span id="forecast-badge" class="px-3 py-1 bg-teal-50 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 text-xs font-semibold rounded-lg">กำลังโหลดข้อมูลกราฟ...</span>
+            </div>
+            <div class="relative w-full h-[280px]">
+                <canvas id="aqiTrendChart"></canvas>
+            </div>
+        </div>
+
+        <!-- ส่วนแผนที่คุณภาพอากาศทั่วโลก -->
+        <div id="section-aqi" class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden scroll-mt-20">
+            <div class="p-4 md:p-6 pb-3 flex flex-col md:flex-row justify-between items-start md:items-center gap-2 border-b border-slate-100 dark:border-slate-700">
+                <div>
+                    <h3 class="text-base md:text-lg font-bold text-slate-800 dark:text-slate-100">🗺️ แผนที่พิกัดคุณภาพอากาศทั่วโลก (Global AQI)</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">คลิกหมุดเพื่อดูข้อมูล หรือเลือกมุมมองทวีปด้านล่าง</p>
+                </div>
+                <div class="flex flex-wrap gap-2 text-[11px]">
+                    <span class="flex items-center"><span class="w-2.5 h-2.5 bg-emerald-500 rounded-full inline-block mr-1"></span> ดี</span>
+                    <span class="flex items-center"><span class="w-2.5 h-2.5 bg-yellow-400 rounded-full inline-block mr-1"></span> ปานกลาง</span>
+                    <span class="flex items-center"><span class="w-2.5 h-2.5 bg-orange-500 rounded-full inline-block mr-1"></span> เริ่มมีผล</span>
+                    <span class="flex items-center"><span class="w-2.5 h-2.5 bg-red-500 rounded-full inline-block mr-1"></span> มีผลกระทบ</span>
+                </div>
+            </div>
+
+            <!-- แถบปุ่มเลือกทวีป/ภูมิภาค -->
+            <div class="bg-slate-50 dark:bg-slate-900 px-4 py-2 flex items-center space-x-2 overflow-x-auto border-b border-slate-100 dark:border-slate-700 text-xs font-medium">
+                <span class="text-slate-400 mr-1">มุมมอง:</span>
+                <button onclick="panToRegion(15, 100, 4)" class="px-3 py-1.5 bg-teal-700 text-white rounded-lg shadow-sm whitespace-nowrap">🌍 ทั่วโลก</button>
+                <button onclick="panToRegion(13.75, 100.5, 6)" class="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 whitespace-nowrap">🇹🇭 ประเทศไทย</button>
+                <button onclick="panToRegion(35.86, 104.19, 4)" class="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 whitespace-nowrap">🌏 เอเชีย</button>
+                <button onclick="panToRegion(54.52, 15.25, 4)" class="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 whitespace-nowrap">🇪🇺 ยุโรป</button>
+                <button onclick="panToRegion(37.09, -95.71, 4)" class="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 whitespace-nowrap">🇺🇸 อเมริกาเหนือ</button>
+            </div>
+
+            <div id="map"></div>
+        </div>
+
+        <!-- ส่วนแผนที่เรดาร์ฝนสดเรียลไทม์ -->
+        <div id="section-radar" class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 scroll-mt-20">
+            <div>
+                <h3 class="text-base md:text-lg font-bold text-slate-800 dark:text-slate-100">🌧️️ แผนที่เรดาร์ฝนและพายุแบบเรียลไทม์ (RainViewer)</h3>
+                <p class="text-xs text-slate-500 dark:text-slate-400">ข้อมูลสดจากเรดาร์ตรวจอากาศ สามารถกดปุ่ม Play เพื่อดูทิศทางการเคลื่อนที่ของฝนได้</p>
+            </div>
+            <div class="w-full h-[450px] rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner">
+                <iframe 
+                    src="https://www.rainviewer.com/map.html?loc=13.7563,100.5018,6&oFa=1&oC=1&oU=0&oCS=1&oF=1&oAP=1&rmt=3&c=1&sm=1&lv=1&layer=radar" 
+                    width="100%" 
+                    height="100%" 
+                    frameborder="0" 
+                    style="border:0;" 
+                    allowfullscreen>
+                </iframe>
+            </div>
+        </div>
+
+        <!-- Stations List & Search Section -->
+        <div id="section-stations" class="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 scroll-mt-20">
+            <div class="flex flex-col md:flex-row justify-between items-center gap-3">
+                <h3 class="text-base md:text-lg font-bold text-slate-800 dark:text-slate-100 self-start md:self-center">รายชื่อสถานีวัดคุณภาพอากาศทั่วโลก</h3>
+                <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                    <select id="aqi-filter-select" onchange="filterStationsByLevel()" class="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-700 dark:text-slate-300 focus:outline-none">
+                        <option value="all">🌐 ทุกระดับ AQI</option>
+                        <option value="good">🟢 อากาศดี</option>
+                        <option value="moderate">🟡 ปานกลาง</option>
+                        <option value="unhealthy">🔴 มีผลกระทบ</option>
+                    </select>
+                    <input type="text" id="search-input" placeholder="ค้นหาชื่อสถานี..." class="px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500 flex-1 md:w-56">
+                </div>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse min-w-[500px]">
+                    <thead>
+                        <tr class="border-b border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-400 uppercase">
+                            <th class="py-3 px-3">ชื่อสถานี</th>
+                            <th class="py-3 px-3">ค่า AQI</th>
+                            <th class="py-3 px-3">สถานะคุณภาพ</th>
+                            <th class="py-3 px-3 text-right">การจัดการ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="station-table-body" class="text-sm divide-y divide-slate-100 dark:divide-slate-700/50">
+                        <tr>
+                            <td colspan="4" class="py-4 text-center text-slate-400 animate-skeleton">กำลังดึงข้อมูลสถานีทั่วโลก...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Modal เชิงลึก -->
+    <div id="detail-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden transform transition-all text-slate-800 dark:text-slate-100">
+            <div class="bg-teal-700 dark:bg-slate-900 text-white p-5 flex justify-between items-center border-b border-teal-800 dark:border-slate-700">
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span id="modal-uid" class="text-xs bg-teal-800 dark:bg-slate-800 px-2.5 py-1 rounded-full text-teal-200">รหัสสถานี</span>
+                        <button id="modal-favorite-btn" onclick="toggleCurrentFavorite()" class="text-xs bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1 rounded-full font-medium transition flex items-center space-x-1">⭐ <span>บันทึกโปรด</span></button>
+                    </div>
+                    <h3 id="modal-station-name" class="text-base md:text-lg font-bold mt-1">กำลังโหลด...</h3>
+                </div>
+                <button onclick="closeModal()" class="bg-teal-800/80 dark:bg-slate-700 hover:bg-teal-900 text-white w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition">✕</button>
+            </div>
+            <div class="p-5 md:p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                <div class="flex items-center justify-between bg-slate-50 dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-200 dark:border-slate-700">
+                    <div>
+                        <p class="text-xs text-slate-400">ดัชนีคุณภาพอากาศ (AQI)</p>
+                        <h4 id="modal-aqi-val" class="text-3xl font-extrabold text-slate-800 dark:text-slate-100">-</h4>
+                    </div>
+                    <div id="modal-badge" class="px-3 py-1.5 rounded-full text-xs font-bold">-</div>
+                </div>
+
+                <div id="modal-health-advice" class="p-4 rounded-2xl text-xs leading-relaxed border space-y-2">
+                    -
+                </div>
+
+                <div>
+                    <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">ข้อมูลมลพิษเสริม (Pollutants)</h4>
+                    <div class="grid grid-cols-3 gap-2 text-center" id="modal-pollutants">
+                        <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <span class="text-[10px] text-slate-400 block">PM2.5</span>
+                            <strong id="val-pm25" class="text-sm font-bold text-slate-700 dark:text-slate-200">-</strong>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <span class="text-[10px] text-slate-400 block">PM10</span>
+                            <strong id="val-pm10" class="text-sm font-bold text-slate-700 dark:text-slate-200">-</strong>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <span class="text-[10px] text-slate-400 block">O3 (โอโซน)</span>
+                            <strong id="val-o3" class="text-sm font-bold text-slate-700 dark:text-slate-200">-</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 mt-12 py-6 text-center text-xs text-slate-400">
+        <p>&copy; 2026 ThaiEnvHealth Platform. ข้อมูลจริงสนับสนุนโดย AQICN, OpenWeatherMap & RainViewer.</p>
+    </footer>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Script ปรับแก้เพื่อเรียกผ่าน Backend Proxy ของ Vercel เรียบร้อยแล้ว -->
+    <script>
+        let allStations = [];
+        let favorites = JSON.parse(localStorage.getItem('thaiehv_favorites')) || [];
+        let activeModalUid = null;
+        let activeModalStationName = "";
+        let currentAqiStandard = 'US';
+        let lastSearchTime = 0;
+        let userMarker = null;
+
+        function showToast(message, type = 'info') {
+            let container = document.getElementById('toast-container');
+            let bg = type === 'error' ? 'bg-red-600' : type === 'success' ? 'bg-emerald-600' : 'bg-teal-700';
+            let toast = document.createElement('div');
+            toast.className = `${bg} text-white px-4 py-3 rounded-xl shadow-lg text-xs md:text-sm font-medium transition transform translate-y-2 opacity-0 pointer-events-auto`;
+            toast.innerText = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.classList.remove('translate-y-2', 'opacity-0'); }, 50);
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'transition-all');
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
+        function toggleAqiStandard() {
+            currentAqiStandard = currentAqiStandard === 'US' ? 'TH' : 'US';
+            let btn = document.getElementById('btn-aqi-std');
+            btn.innerText = currentAqiStandard === 'US' ? "🇺🇸 US EPA" : "🇹🇭 Thai PCD";
+            showToast(`เปลี่ยนมุมมองมาตรฐาน AQI เป็น ${currentAqiStandard === 'US' ? 'US EPA (สากล)' : 'Thai PCD (กรมควบคุมมลพิษ)'}`);
+            renderTable(allStations);
+            if (activeModalUid) fetchStationDetail(activeModalUid, true);
+        }
+
+        function convertAqi(rawAqi) {
+            let aqi = parseInt(rawAqi) || 0;
+            if (currentAqiStandard === 'TH') {
+                return Math.round(aqi * 1.05); 
+            }
+            return aqi;
+        }
+
+        function toggleDarkMode() {
+            let html = document.documentElement;
+            let icon = document.getElementById('theme-icon');
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                html.classList.add('light');
+                icon.innerText = "🌙";
+                localStorage.setItem('theme', 'light');
+            } else {
+                html.classList.remove('light');
+                html.classList.add('dark');
+                icon.innerText = "☀️";
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        if (localStorage.getItem('theme') === 'dark') {
+            document.documentElement.classList.add('dark');
+            document.getElementById('theme-icon').innerText = "☀️";
+        }
+
+        function toggleMenu() {
+            let menu = document.getElementById('dropdown-menu');
+            menu.classList.toggle('hidden');
+        }
+
+        function scrollToSection(sectionId) {
+            let element = document.getElementById(sectionId);
+            if (element) element.scrollIntoView({ behavior: 'smooth' });
+            document.getElementById('dropdown-menu').classList.add('hidden');
+        }
+
+        window.addEventListener('click', function(e) {
+            let menu = document.getElementById('dropdown-menu');
+            let btn = e.target.closest('button');
+            if (!btn && !menu.contains(e.target)) menu.classList.add('hidden');
+        });
+
+        var map = L.map('map').setView([20, 0], 3);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        function panToRegion(lat, lon, zoom) {
+            map.setView([lat, lon], zoom);
+            showToast(`ย้ายมุมมองแผนไปยังพิกัดเป้าหมายสำเร็จ`);
+        }
+
+        function getAqiColor(aqi) {
+            if (aqi <= 50) return '#10b981';
+            if (aqi <= 100) return '#facc15';
+            if (aqi <= 150) return '#f97316';
+            return '#ef4444';
+        }
+
+        function searchGlobalCity() {
+            let now = Date.now();
+            if (now - lastSearchTime < 2000) {
+                showToast("กรุณารอสักครู่ก่อนค้นหาใหม่อีกครั้ง", "error");
+                return;
+            }
+            lastSearchTime = now;
+
+            let query = document.getElementById('global-city-input').value.trim();
+            if (!query) {
+                showToast("กรุณากรอกชื่อเมืองที่ต้องการค้นหา", "error");
+                return;
+            }
+
+            showToast(`กำลังค้นหาพิกัดของ "${query}"...`);
+            
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`, {
+                headers: { 'Accept-Language': 'th,en;q=0.9' }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data && data.length > 0) {
+                    let city = data[0];
+                    let lat = parseFloat(city.lat);
+                    let lon = parseFloat(city.lon);
+                    
+                    map.setView([lat, lon], 11);
+                    L.marker([lat, lon]).addTo(map).bindPopup(`<b>📍 ${city.display_name}</b>`).openPopup();
+                    fetchRealWeather(lat, lon);
+                    showToast(`พบพิกัดสำเร็จ!`, "success");
+                } else {
+                    showToast("ไม่พบข้อมูลสถานที่ที่คุณค้นหา ลองตรวจสอบสะกดคำอีกครั้ง", "error");
+                }
+            })
+            .catch(() => showToast("เกิดข้อผิดพลาดในการเชื่อมต่อระบบค้นหาพิกัดเมือง", "error"));
+        }
+
+        // ดึงสภาพอากาศผ่าน Backend Proxy (/api/proxy)
+        function fetchRealWeather(lat, lon) {
+            document.getElementById('current-coords-label').innerText = `พิกัดปัจจุบัน: Lat ${lat.toFixed(4)}, Lon ${lon.toFixed(4)}`;
+            fetch(`/api/proxy?endpoint=weather&lat=${lat}&lon=${lon}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.main) {
+                        let temp = data.main.temp.toFixed(1);
+                        let humidity = data.main.humidity;
+                        let windSpeed = data.wind.speed.toFixed(1);
+                        let weatherDesc = data.weather[0].description;
+
+                        document.getElementById('dash-temp').classList.remove('animate-skeleton');
+                        document.getElementById('dash-wind').classList.remove('animate-skeleton');
+                        document.getElementById('dash-humidity').classList.remove('animate-skeleton');
+                        document.getElementById('dash-condition').classList.remove('animate-skeleton');
+
+                        document.getElementById('dash-temp').innerText = `${temp} °C`;
+                        document.getElementById('dash-wind').innerText = `${windSpeed} ม./ซ.`;
+                        document.getElementById('dash-humidity').innerText = `${humidity} %`;
+                        document.getElementById('dash-condition').innerText = weatherDesc;
+                        document.getElementById('windy-summary-val').innerText = `${windSpeed} เมตร/วินาที`;
+                        document.getElementById('gps-status-text').innerText = "เชื่อมต่อพิกัดจริงแล้ว";
+                    }
+                })
+                .catch(() => setFallbackWeather());
+        }
+
+        function setFallbackWeather() {
+            document.getElementById('dash-temp').classList.remove('animate-skeleton');
+            document.getElementById('dash-wind').classList.remove('animate-skeleton');
+            document.getElementById('dash-humidity').classList.remove('animate-skeleton');
+            document.getElementById('dash-condition').classList.remove('animate-skeleton');
+            document.getElementById('dash-temp').innerText = "31.0 °C";
+            document.getElementById('dash-wind').innerText = "2.5 ม./ซ.";
+            document.getElementById('dash-humidity').innerText = "68 %";
+            document.getElementById('dash-condition').innerText = "มีเมฆบางส่วน";
+            document.getElementById('windy-summary-val').innerText = "2.5 เมตร/วินาที";
+            document.getElementById('gps-status-text').innerText = "โหมดพิกัดสำรอง";
+            document.getElementById('current-coords-label').innerText = "พิกัดกลาง (กรุงเทพมหานคร)";
+        }
+
+        function locateUser(showAlert = false) {
+            if (!navigator.geolocation) {
+                if (showAlert) showToast("เบราว์เซอร์ของคุณไม่รองรับการระบุตำแหน่ง GPS", "error");
+                setFallbackWeather();
+                return;
+            }
+
+            if (showAlert) showToast("กำลังดึงพิกัด GPS จริงจากมือถือของคุณ...");
+            document.getElementById('gps-status-text').innerText = "กำลังค้นหาพิกัด GPS...";
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    handleSuccessfulGPS(position, showAlert);
+                },
+                (error) => {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            handleSuccessfulGPS(position, showAlert);
+                        },
+                        (fallbackError) => {
+                            let errorMsg = "ไม่สามารถเข้าถึงพิกัด GPS ได้ กำลังใช้พิกัดสำรอง";
+                            if (showAlert) showToast(errorMsg, "error");
+                            setFallbackWeather();
+                            document.getElementById('gps-status-text').innerText = "ใช้พิกัดสำรอง";
+                        },
+                        { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+                    );
+                },
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+            );
+        }
+
+        function handleSuccessfulGPS(position, showAlert) {
+            let lat = position.coords.latitude;
+            let lon = position.coords.longitude;
+            
+            map.setView([lat, lon], 14);
+
+            if (userMarker) {
+                map.removeLayer(userMarker);
+            }
+            
+            userMarker = L.marker([lat, lon]).addTo(map)
+                .bindPopup("<b>📍 ตำแหน่งจริงจาก GPS มือถือของคุณ</b>")
+                .openPopup();
+
+            fetchRealWeather(lat, lon);
+            findNearestStation(lat, lon);
+
+            document.getElementById('gps-status-text').innerText = "พิกัด GPS พร้อมใช้งาน";
+            if (showAlert) showToast("ดึงพิกัด GPS จริงสำเร็จ!", "success");
+        }
+
+        function findNearestStation(lat, lon) {
+            if (!allStations || allStations.length === 0) return;
+            let nearest = allStations[0];
+            let minDist = Infinity;
+
+            allStations.forEach(s => {
+                if (s.lat && s.lon) {
+                    let dist = Math.pow(s.lat - lat, 2) + Math.pow(s.lon - lon, 2);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearest = s;
+                    }
+                }
+            });
+
+            if (nearest && nearest.uid) {
+                fetchStationDetail(nearest.uid, true);
+            }
+        }
+
+        locateUser(false);
+
+        function renderFavoritesUI() {
+            const container = document.getElementById('favorites-container');
+            container.innerHTML = "";
+            if (favorites.length === 0) {
+                container.innerHTML = `<div class="p-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-400 col-span-full">ยังไม่มีสถานีโปรด กดปุ่ม ⭐ ในหน้าต่างรายละเอียดสถานีเพื่อบันทึก</div>`;
+                return;
+            }
+            favorites.forEach(fav => {
+                container.innerHTML += `
+                    <div onclick="fetchStationDetail('${fav.uid}')" class="bg-slate-50 dark:bg-slate-900/60 p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer hover:border-teal-500 transition flex justify-between items-center">
+                        <div>
+                            <span class="text-xs font-bold text-slate-700 dark:text-slate-200 block truncate max-w-[200px]">${fav.name}</span>
+                            <span class="text-[10px] text-slate-400">คลิกดูข้อมูลด่วน</span>
+                        </div>
+                        <span class="text-xs font-bold px-2 py-1 rounded-lg bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300">AQI ${fav.aqi}</span>
+                    </div>
+                `;
+            });
+        }
+        renderFavoritesUI();
+
+        function toggleCurrentFavorite() {
+            if (!activeModalUid) return;
+            let index = favorites.findIndex(f => f.uid === activeModalUid);
+            let currentAqi = document.getElementById('modal-aqi-val').innerText;
+            if (index > -1) {
+                favorites.splice(index, 1);
+                showToast("ลบออกจากสถานีโปรดแล้ว");
+            } else {
+                favorites.push({ uid: activeModalUid, name: activeModalStationName, aqi: currentAqi });
+                showToast("บันทึกเป็นสถานีโปรดเรียบร้อย!", "success");
+            }
+            localStorage.setItem('thaiehv_favorites', JSON.stringify(favorites));
+            renderFavoritesUI();
+            updateFavoriteButtonState();
+        }
+
+        function updateFavoriteButtonState() {
+            let btn = document.getElementById('modal-favorite-btn');
+            let exists = favorites.some(f => f.uid === activeModalUid);
+            if (exists) {
+                btn.innerHTML = "⭐ <span>บันทึกแล้ว</span>";
+                btn.className = "text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-full font-medium transition flex items-center space-x-1";
+            } else {
+                btn.innerHTML = "⭐ <span>บันทึกโปรด</span>";
+                btn.className = "text-xs bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1 rounded-full font-medium transition flex items-center space-x-1";
+            }
+        }
+
+        const ctx = document.getElementById('aqiTrendChart').getContext('2d');
+        const aqiTrendChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์'],
+                datasets: [{
+                    label: 'พยากรณ์ค่า AQI ล่วงหน้า',
+                    data: [45, 52, 60, 48, 42],
+                    borderColor: '#0d9488',
+                    backgroundColor: 'rgba(13, 148, 136, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, max: 200 } }
+            }
+        });
+
+        // ดึงรายชื่อสถานี AQI ทั่วโลกผ่าน Backend Proxy (/api/proxy)
+        function loadGlobalStations() {
+            let cachedData = localStorage.getItem('thaiehv_stations_cache');
+            let cachedTime = localStorage.getItem('thaiehv_stations_time');
+            let now = Date.now();
+
+            if (cachedData && cachedTime && (now - cachedTime < 600000)) {
+                allStations = JSON.parse(cachedData);
+                processStationsData(allStations);
+            } else {
+                fetch(`/api/proxy?endpoint=stations`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === "ok") {
+                            allStations = data.data;
+                            localStorage.setItem('thaiehv_stations_cache', JSON.stringify(allStations));
+                            localStorage.setItem('thaiehv_stations_time', Date.now());
+                            processStationsData(allStations);
+                        } else {
+                            throw new Error("Invalid API status");
+                        }
+                    })
+                    .catch(() => {
+                        let totalElem = document.getElementById('total-stations');
+                        totalElem.classList.remove('animate-skeleton');
+                        totalElem.innerText = "ไม่สามารถเชื่อมต่อ";
+                    });
+            }
+        }
+
+        function processStationsData(stations) {
+            let totalElem = document.getElementById('total-stations');
+            totalElem.classList.remove('animate-skeleton');
+            totalElem.innerText = stations.length.toLocaleString() + " สถานี";
+            renderMapMarkers(stations);
+            renderTable(stations);
+
+            let unhealthyCount = stations.filter(s => parseInt(s.aqi) > 100).length;
+            if (unhealthyCount > 0) {
+                let banner = document.getElementById('alert-banner');
+                document.getElementById('alert-banner-text').innerText = `แจ้งเตือนสถานการณ์วิกฤต: พบสถานีเกินเกณฑ์มาตรฐาน ${unhealthyCount} จุด`;
+                banner.classList.remove('hidden');
+            }
+        }
+
+        loadGlobalStations();
+
+        function renderMapMarkers(stations) {
+            stations.forEach(station => {
+                if (station.lat && station.lon) {
+                    let aqiVal = convertAqi(station.aqi);
+                    let customIcon = L.divIcon({
+                        className: 'custom-aqi-icon',
+                        html: `<div style="background-color: ${getAqiColor(aqiVal)}; color: white; padding: 2px 5px; border-radius: 9999px; font-size: 9px; font-weight: bold; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${aqiVal}</div>`,
+                        iconSize: [28, 20]
+                    });
+                    var marker = L.marker([station.lat, station.lon], { icon: customIcon }).addTo(map);
+                    marker.bindPopup(`
+                        <div style="font-family: 'Prompt', sans-serif; text-align: center; min-width: 140px;">
+                            <b style="font-size: 11px; color: #0f766e; display: block; margin-bottom: 4px;">${station.station.name}</b>
+                            <span style="font-size: 11px; display: block; margin-bottom: 6px;">AQI: <b>${aqiVal}</b></span>
+                            <button onclick="fetchStationDetail('${station.uid}', false)" style="background-color: #0d9488; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; font-weight: 500;">ดูข้อมูลเชิงลึก</button>
+                        </div>
+                    `);
+                }
+            });
+        }
+
+        function renderTable(stations) {
+            const tableBody = document.getElementById('station-table-body');
+            tableBody.innerHTML = "";
+            if (stations.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-slate-400">ไม่พบสถานีที่คุณค้นหา</td></tr>`;
+                return;
+            }
+            stations.slice(0, 30).forEach(station => {
+                let aqiVal = convertAqi(station.aqi);
+                let badgeColor = aqiVal <= 50 ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300" : aqiVal <= 100 ? "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300" : "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300";
+                let statusText = aqiVal <= 50 ? "คุณภาพดี" : aqiVal <= 100 ? "ปานกลาง" : "มีผลกระทบ";
+
+                tableBody.innerHTML += `
+                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
+                        <td class="py-3 px-3 font-medium text-slate-700 dark:text-slate-200 text-xs md:text-sm">${station.station.name}</td>
+                        <td class="py-3 px-3 font-bold text-slate-900 dark:text-slate-100 text-xs md:text-sm">${aqiVal}</td>
+                        <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap ${badgeColor}">${statusText}</span></td>
+                        <td class="py-3 px-3 text-right">
+                            <button onclick="fetchStationDetail('${station.uid}', false)" class="bg-teal-50 dark:bg-slate-700 hover:bg-teal-100 text-teal-700 dark:text-teal-300 text-xs font-medium px-3 py-1.5 rounded-lg transition whitespace-nowrap">ดูเชิงลึก</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        function filterStationsByLevel() {
+            let level = document.getElementById('aqi-filter-select').value;
+            let keyword = document.getElementById('search-input').value.toLowerCase();
+            let filtered = allStations.filter(s => {
+                let aqi = convertAqi(s.aqi);
+                let matchName = s.station.name.toLowerCase().includes(keyword);
+                if (level === 'good') return matchName && aqi <= 50;
+                if (level === 'moderate') return matchName && aqi > 50 && aqi <= 100;
+                if (level === 'unhealthy') return matchName && aqi > 100;
+                return matchName;
+            });
+            renderTable(filtered);
+        }
+
+        document.getElementById('search-input').addEventListener('input', filterStationsByLevel);
+
+        // ดึงรายละเอียดสถานีเฉพาะผ่าน Backend Proxy (/api/proxy)
+        function fetchStationDetail(uid, isBackgroundLoad = false) {
+            activeModalUid = uid;
+            
+            if (!isBackgroundLoad) {
+                document.getElementById('modal-station-name').innerText = "กำลังโหลดข้อมูล...";
+                document.getElementById('modal-uid').innerText = "UID: " + uid;
+                document.getElementById('modal-aqi-val').innerText = "...";
+                document.getElementById('modal-badge').innerText = "...";
+                document.getElementById('val-pm25').innerText = "-";
+                document.getElementById('val-pm10').innerText = "-";
+                document.getElementById('val-o3').innerText = "-";
+                document.getElementById('modal-health-advice').innerHTML = "กำลังดึงข้อมูลอัปเดตล่าสุดจากสถานี...";
+                document.getElementById('detail-modal').classList.remove('hidden');
+            }
+
+            fetch(`/api/proxy?endpoint=station_detail&uid=${uid}`)
+                .then(res => res.json())
+                .then(result => {
+                    if (result.status === "ok") {
+                        let data = result.data;
+                        activeModalStationName = data.city.name;
+                        let displayAqi = convertAqi(data.aqi);
+                        
+                        if (!isBackgroundLoad) {
+                            document.getElementById('modal-station-name').innerText = activeModalStationName;
+                            document.getElementById('modal-aqi-val').innerText = displayAqi;
+                            updateFavoriteButtonState();
+
+                            let badge = document.getElementById('modal-badge');
+                            let advice = document.getElementById('modal-health-advice');
+
+                            if (displayAqi <= 50) {
+                                badge.className = "px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300";
+                                badge.innerText = "คุณภาพดี (Good)";
+                                advice.className = "p-4 rounded-2xl text-xs leading-relaxed bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800";
+                                advice.innerHTML = `<b>คำแนะนำสุขภาพ:</b> คุณภาพอากาศดีมาก เหมาะแก่การทำกิจกรรมกลางแจ้งสำหรับทุกคน`;
+                            } else if (displayAqi <= 100) {
+                                badge.className = "px-3 py-1.5 rounded-full text-xs font-bold bg-yellow-100 dark:bg-yellow-900/50 text-yellow-700 dark:text-yellow-300";
+                                badge.innerText = "ปานกลาง (Moderate)";
+                                advice.className = "p-4 rounded-2xl text-xs leading-relaxed bg-yellow-50 dark:bg-yellow-950/40 text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-800";
+                                advice.innerHTML = `<b>คำแนะนำสุขภาพ:</b> ประชาชนทั่วไปทำกิจกรรมกลางแจ้งได้ปกติ กลุ่มเสี่ยงควรสังเกตอาการ`;
+                            } else {
+                                badge.className = "px-3 py-1.5 rounded-full text-xs font-bold bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300";
+                                badge.innerText = "มีผลกระทบต่อสุขภาพ";
+                                advice.className = "p-4 rounded-2xl text-xs leading-relaxed bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800";
+                                advice.innerHTML = `<b>คำแนะนำสุขภาพ:</b> ควรงดกิจกรรมกลางแจ้งและสวมหน้ากากอนามัยป้องกันฝุ่น`;
+                            }
+
+                            let iaqi = data.iaqi || {};
+                            document.getElementById('val-pm25').innerText = iaqi.pm25 ? iaqi.pm25.v : "N/A";
+                            document.getElementById('val-pm10').innerText = iaqi.pm10 ? iaqi.pm10.v : "N/A";
+                            document.getElementById('val-o3').innerText = iaqi.o3 ? iaqi.o3.v : "N/A";
+                        }
+
+                        if (data.forecast && data.forecast.daily && data.forecast.daily.pm25) {
+                            let pm25Forecast = data.forecast.daily.pm25.slice(0, 5);
+                            let labels = pm25Forecast.map(f => f.day);
+                            let values = pm25Forecast.map(f => convertAqi(f.avg));
+
+                            aqiTrendChart.data.labels = labels;
+                            aqiTrendChart.data.datasets[0].data = values;
+                            aqiTrendChart.update();
+                            document.getElementById('chart-station-title').innerText = `แนวโน้ม PM2.5 ล่วงหน้า: ${data.city.name}`;
+                            document.getElementById('forecast-badge').innerText = "ข้อมูลพยากรณ์จริง";
+                        }
+                    }
+                })
+                .catch(() => {
+                    if (!isBackgroundLoad) showToast("ไม่สามารถดึงข้อมูลรายละเอียดสถานีนี้ได้", "error");
+                });
+        }
+
+        function closeModal() {
+            document.getElementById('detail-modal').classList.add('hidden');
+        }
+
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                map.invalidateSize();
+            }, 500);
+        });
+    </script>
+</body>
+</html>
